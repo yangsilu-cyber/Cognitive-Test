@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cognitive Assessment Tool</title>
+  <meta name="description" content="Single-file cognitive assessment with reaction, Go-NoGo, memory, naming, and form discrimination tasks." />
+  <meta name="theme-color" content="#F8F9FA" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/lucide-react@latest/dist/umd/lucide-react.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    html, body, #root {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: linear-gradient(160deg, #F8F9FA 0%, #E9ECEF 100%);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #000;
+    }
+    .panel {
+      max-width: 900px;
+      width: 100%;
+      border-radius: 30px;
+      background: #fff;
+      box-shadow: 0 10px 30px rgba(0,0,0,.05);
+      border: 1px solid rgba(0,0,0,.06);
+      padding: 40px;
+    }
+    .fade { animation: fade .25s ease-out; }
+    @keyframes fade { from { opacity: 0; transform: scale(.985);} to { opacity: 1; transform: scale(1);} }
+    .flash-red { animation: flashRed .35s ease-in-out; }
+    .flash-green { animation: flashGreen .35s ease-in-out; }
+    .shake { animation: shake .22s ease-in-out; }
+    .spin-slow { animation: spinSlow 2.2s linear infinite; }
+    .breathe { animation: breathe 1.8s ease-in-out infinite; }
+    .scene-fade { animation: sceneFade .35s ease-in-out; }
+    @keyframes flashRed { 50% { box-shadow: 0 0 0 7px rgba(255,59,48,.25); border-color: rgba(255,59,48,.45);} }
+    @keyframes flashGreen { 50% { box-shadow: 0 0 0 7px rgba(52,199,89,.22); border-color: rgba(52,199,89,.45);} }
+    @keyframes shake { 25% { transform: translateX(-5px);} 75% { transform: translateX(5px);} }
+    @keyframes spinSlow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes breathe { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+    @keyframes sceneFade { from { opacity: .2; } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useEffect, useMemo, useRef, useState } = React;
+    const APP_BTN = "#0000FF";
+    const WORDS = ["Apple", "Car", "Bed", "Tree", "Book", "Fish", "Chair", "Clock"];
+
+    const Lucide = window.lucideReact || window.LucideReact || {};
+    const BikeIcon = Lucide.Bike;
+    const AppleIcon = Lucide.Apple;
+    const CatIcon = Lucide.Cat;
+
+    const TESTS = [
+      { key: "reaction", title: "Reaction Pressure Release", subtitle: "Press and hold. Release when dial turns green. 3 rounds." },
+      { key: "gonogo", title: "Spatial Capture", subtitle: "In a 3x3 space, tap Blue square. Do not tap Red circle. 10 rounds." },
+      { key: "memory", title: "Short-Term Memory", subtitle: "Remember 3 words, then choose them from 6 options." },
+      { key: "naming", title: "Naming", subtitle: "Name the icon by selecting the correct word." },
+      { key: "form", title: "Form Discrimination", subtitle: "Pick the option that exactly matches the reference shape." }
+    ];
+
+    const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+    const shuffle = (arr) => {
+      const c = [...arr];
+      for (let i = c.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [c[i], c[j]] = [c[j], c[i]];
+      }
+      return c;
+    };
+
+    const escapeCsv = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const makeGo = () => Array.from({ length: 10 }).map(() => (Math.random() > 0.5 ? "Blue" : "Red"));
+
+    function makeFormTrials() {
+      const families = [
+        {
+          ref: "M50 8 L61 35 L90 35 L66 53 L75 84 L50 66 L25 84 L34 53 L10 35 L39 35 Z",
+          d1:  "M50 10 L82 30 L82 70 L50 90 L18 70 L18 30 Z",
+          d2:  "M50 12 L88 78 L12 78 Z"
+        },
+        {
+          ref: "M20 30 L40 12 L65 18 L82 40 L76 68 L52 84 L28 78 L14 54 Z",
+          d1:  "M20 20 L80 20 L80 80 L20 80 Z",
+          d2:  "M10 50 L30 20 L50 50 L70 20 L90 50 L70 80 L50 50 L30 80 Z"
+        }
+      ];
+
+      return Array.from({ length: 6 }).map(() => {
+        const f = families[rand(0, families.length - 1)];
+        const options = shuffle([
+          { path: f.ref, isCorrect: true, tag: "correct" },
+          { path: f.d1, isCorrect: false, tag: "d1" },
+          { path: f.d2, isCorrect: false, tag: "d2" }
+        ]);
+        return {
+          referencePath: f.ref,
+          options
+        };
+      });
+    }
+
+    function makeNamingTrials() {
+      const pool = [
+        { key: "Bike", comp: BikeIcon, options: ["Bike", "Apple", "Cat", "Watch"] },
+        { key: "Apple", comp: AppleIcon, options: ["Apple", "Bike", "Cat", "Lion"] },
+        { key: "Cat", comp: CatIcon, options: ["Cat", "Bike", "Apple", "Watch"] }
+      ];
+      return shuffle(pool).map((item) => ({
+        ...item,
+        options: shuffle(item.options)
+      }));
+    }
+
+    const downloadCsv = (content, name) => {
+      const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+
+    function ShapePath({ path, size = 96 }) {
+      return (
+        <svg width={size} height={size} viewBox="0 0 100 100">
+          <path d={path} fill="none" stroke="#111" strokeWidth="5" strokeLinejoin="round" strokeLinecap="round" />
+        </svg>
+      );
+    }
+
+    function FallbackSketch({ label }) {
+      const stroke = "#333";
+      const sw = "2";
+      if (label === "Bike") {
+        return (
+          <svg width="200" height="200" viewBox="0 0 100 100">
+            <circle cx="26" cy="72" r="16" fill="none" stroke={stroke} strokeWidth={sw} />
+            <circle cx="74" cy="72" r="16" fill="none" stroke={stroke} strokeWidth={sw} />
+            <path d="M26 72 L42 52 L58 72 L42 72 L50 38 L63 38 L70 50" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M38 52 L31 38" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+            <path d="M67 42 L76 42" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+          </svg>
+        );
+      }
+      if (label === "Apple") {
+        return (
+          <svg width="200" height="200" viewBox="0 0 100 100">
+            <path d="M50 24 C45 19 35 19 29 26 C24 32 22 40 24 49 C27 65 37 82 50 82 C63 82 73 65 76 49 C78 40 76 32 71 26 C65 19 55 19 50 24 Z" fill="none" stroke={stroke} strokeWidth={sw} strokeLinejoin="round" />
+            <path d="M49 21 C49 15 53 11 58 9" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+            <path d="M56 13 C63 10 70 12 74 18 C68 19 62 22 58 27" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        );
+      }
+      return (
+        <svg width="200" height="200" viewBox="0 0 100 100">
+          <path d="M28 40 L40 26 L50 36 L60 26 L72 40" fill="none" stroke={stroke} strokeWidth={sw} strokeLinejoin="round" />
+          <circle cx="50" cy="56" r="23" fill="none" stroke={stroke} strokeWidth={sw} />
+          <circle cx="42" cy="54" r="2" fill={stroke} />
+          <circle cx="58" cy="54" r="2" fill={stroke} />
+          <path d="M47 63 L53 63" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+          <path d="M36 62 L24 60 M36 66 L24 68 M64 62 L76 60 M64 66 L76 68" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+          <path d="M72 70 C84 72 88 82 80 88" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" />
+        </svg>
+      );
+    }
+
+    function IconOrFallback({ Comp, label }) {
+      if (Comp) return <Comp size={180} strokeWidth={2.4} />;
+      const emojiMap = { Bike: "🚲", Apple: "🍎", Cat: "🐈" };
+      if (emojiMap[label]) {
+        return (
+          <div className="flex flex-col items-center justify-center">
+            <span style={{ fontSize: "120px", lineHeight: 1 }} role="img" aria-label={label}>
+              {emojiMap[label]}
+            </span>
+          </div>
+        );
+      }
+      return <FallbackSketch label={label} />;
+    }
+
+    function App() {
+      const [phase, setPhase] = useState("intro");
+      const [testIndex, setTestIndex] = useState(0);
+      const [countdown, setCountdown] = useState(3);
+      const [instructionStart, setInstructionStart] = useState(Date.now());
+      const [instructionMs, setInstructionMs] = useState(0);
+      const [rows, setRows] = useState([]);
+      const [fx, setFx] = useState("");
+
+      // Reaction
+      const [rTrial, setRTrial] = useState(0);
+      const [rState, setRState] = useState("await_hold");
+      const [rHolding, setRHolding] = useState(false);
+      const rShown = useRef(0), rWait = useRef(0), rTimer = useRef(null), rMiss = useRef(null);
+
+      // GoNoGo
+      const [goTrials] = useState(() => makeGo());
+      const [goIdx, setGoIdx] = useState(0);
+      const [goStim, setGoStim] = useState(null);
+      const [goPos, setGoPos] = useState(4);
+      const [goSceneKey, setGoSceneKey] = useState(0);
+      const goShown = useRef(0), goClicked = useRef(false), goTimer = useRef(null);
+      const audioCtxRef = useRef(null);
+      const beep = () => {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!audioCtxRef.current) audioCtxRef.current = new AC();
+        const ctx = audioCtxRef.current;
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = "sine";
+        o.frequency.value = 880;
+        g.gain.value = 0.001;
+        g.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + 0.13);
+      };
+
+
+      // Memory
+      const [targets] = useState(() => shuffle(WORDS).slice(0, 3));
+      const [choices] = useState(() => shuffle([...targets, ...shuffle(WORDS.filter((w) => !targets.includes(w))).slice(0, 3)]));
+      const [showWords, setShowWords] = useState(true);
+      const [picked, setPicked] = useState([]);
+      const memStart = useRef(0);
+
+      // Naming
+      const [namingTrials] = useState(() => makeNamingTrials());
+      const [namingIdx, setNamingIdx] = useState(0);
+      const namingStart = useRef(0);
+
+      // Form
+      const [formTrials] = useState(() => makeFormTrials());
+      const [formIdx, setFormIdx] = useState(0);
+      const formStart = useRef(0);
+
+      const test = TESTS[testIndex];
+      const progress = Math.min(100, Math.round(((testIndex + (phase === "running" ? 0.6 : phase === "countdown" ? 0.25 : 0.05)) / TESTS.length) * 100));
+      const stats = useMemo(() => {
+        const total = rows.length;
+        const correct = rows.filter((r) => r.is_correct).length;
+        const acc = total ? Math.round((correct / total) * 10000) / 100 : 0;
+        const rts = rows.filter((r) => typeof r.reaction_time_ms === "number");
+        const avg = rts.length ? Math.round(rts.reduce((s, r) => s + r.reaction_time_ms, 0) / rts.length) : "";
+        const score30 = total ? Math.round((correct / total) * 30) : 0;
+        return { acc, avg, score30, total, correct };
+      }, [rows]);
+
+      const push = (x) => setRows((p) => [...p, x]);
+      const flash = (ok) => {
+        setFx(ok ? "flash-green" : "flash-red shake");
+        setTimeout(() => setFx(""), 350);
+      };
+
+      const gotoInstruction = (idx) => {
+        setTestIndex(idx);
+        setPhase("instruction");
+        setInstructionStart(Date.now());
+      };
+
+      const onReady = () => {
+        setInstructionMs(Date.now() - instructionStart);
+        setCountdown(3);
+        setPhase("countdown");
+      };
+
+      useEffect(() => {
+        if (phase !== "countdown") return;
+        if (countdown === 0) {
+          setPhase("running");
+          if (test.key === "reaction") { setRTrial(0); setRState("await_hold"); setRHolding(false); }
+          if (test.key === "gonogo") { setGoIdx(0); }
+          if (test.key === "memory") { setShowWords(true); setPicked([]); }
+          if (test.key === "naming") { setNamingIdx(0); }
+          if (test.key === "form") { setFormIdx(0); }
+          return;
+        }
+        const t = setTimeout(() => setCountdown((v) => v - 1), 900);
+        return () => clearTimeout(t);
+      }, [phase, countdown, test]);
+
+      // Reaction
+      useEffect(() => {
+        if (phase !== "running" || test.key !== "reaction" || rState !== "waiting_green") return;
+        clearTimeout(rTimer.current);
+        clearTimeout(rMiss.current);
+        rTimer.current = setTimeout(() => {
+          setRState("green");
+          rShown.current = Date.now();
+          beep();
+          rMiss.current = setTimeout(() => {
+            push({ test_phase: instructionMs, test_type: "Reaction", accuracy: 0, is_correct: false, reaction_time_ms: "", error_detail: "Miss", stimulus: "Green" });
+            stepReaction();
+          }, 3500);
+        }, rand(2000, 5000));
+        return () => { clearTimeout(rTimer.current); clearTimeout(rMiss.current); };
+      }, [phase, test, rState, rTrial, instructionMs]);
+
+      const stepReaction = () => {
+        if (rTrial >= 2) { gotoInstruction(1); return; }
+        setRTrial((v) => v + 1);
+        setRState("await_hold");
+        setRHolding(false);
+      };
+
+      const holdStartReaction = (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (phase !== "running" || test.key !== "reaction") return;
+        if (rState === "await_hold") {
+          rWait.current = Date.now();
+          setRHolding(true);
+          setRState("waiting_green");
+          return;
+        }
+        if (rState === "waiting_green" || rState === "green") setRHolding(true);
+      };
+
+      const holdEndReaction = (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (phase !== "running" || test.key !== "reaction") return;
+        setRHolding(false);
+        if (rState === "waiting_green") {
+          push({ test_phase: instructionMs, test_type: "Reaction", accuracy: 0, is_correct: false, reaction_time_ms: Date.now() - rWait.current, error_detail: "Anticipation", stimulus: "Green" });
+          flash(false);
+          stepReaction();
+          return;
+        }
+        if (rState === "green") {
+          push({ test_phase: instructionMs, test_type: "Reaction", accuracy: 1, is_correct: true, reaction_time_ms: Date.now() - rShown.current, error_detail: "", stimulus: "Green" });
+          flash(true);
+          stepReaction();
+        }
+      };
+
+      // GoNoGo
+      useEffect(() => {
+        if (phase !== "running" || test.key !== "gonogo") return;
+        if (goIdx >= 10) { gotoInstruction(2); return; }
+        const s = goTrials[goIdx];
+        setGoStim(s);
+        setGoPos(rand(0, 8));
+        setGoSceneKey((k) => k + 1);
+        goClicked.current = false;
+        goShown.current = Date.now();
+        clearTimeout(goTimer.current);
+        goTimer.current = setTimeout(() => {
+          if (!goClicked.current) {
+            if (s === "Blue") push({ test_phase: instructionMs, test_type: "Go-NoGo", accuracy: 0, is_correct: false, reaction_time_ms: "", error_detail: "Miss", stimulus: s });
+            else push({ test_phase: instructionMs, test_type: "Go-NoGo", accuracy: 1, is_correct: true, reaction_time_ms: "", error_detail: "", stimulus: s });
+          }
+          setGoIdx((v) => v + 1);
+        }, 1800);
+        return () => clearTimeout(goTimer.current);
+      }, [phase, test, goIdx, goTrials, instructionMs]);
+
+      const tapGo = () => {
+        if (phase !== "running" || test.key !== "gonogo" || !goStim || goClicked.current) return;
+        goClicked.current = true;
+        const rt = Date.now() - goShown.current;
+        if (goStim === "Blue") {
+          push({ test_phase: instructionMs, test_type: "Go-NoGo", accuracy: 1, is_correct: true, reaction_time_ms: rt, error_detail: "", stimulus: goStim });
+          flash(true);
+        } else {
+          push({ test_phase: instructionMs, test_type: "Go-NoGo", accuracy: 0, is_correct: false, reaction_time_ms: rt, error_detail: "Wrong Tap", stimulus: goStim });
+          flash(false);
+        }
+      };
+
+      // Memory
+      useEffect(() => {
+        if (phase !== "running" || test.key !== "memory" || !showWords) return;
+        const t = setTimeout(() => { setShowWords(false); memStart.current = Date.now(); }, 8000);
+        return () => clearTimeout(t);
+      }, [phase, test, showWords]);
+
+      useEffect(() => {
+        if (phase !== "running" || test.key !== "memory" || showWords || picked.length !== 3) return;
+        targets.filter((w) => !picked.includes(w)).forEach(() => push({ test_phase: instructionMs, test_type: "Memory", accuracy: 0, is_correct: false, reaction_time_ms: "", error_detail: "Miss", stimulus: "Word" }));
+        gotoInstruction(3);
+      }, [phase, test, showWords, picked, targets, instructionMs]);
+
+      const tapMemory = (w) => {
+        if (phase !== "running" || test.key !== "memory" || showWords) return;
+        setPicked((prev) => {
+          if (prev.includes(w) || prev.length >= 3) return prev;
+          const ok = targets.includes(w);
+          push({ test_phase: instructionMs, test_type: "Memory", accuracy: ok ? 1 : 0, is_correct: ok, reaction_time_ms: Date.now() - memStart.current, error_detail: ok ? "" : "Wrong Tap", stimulus: "Word" });
+          flash(ok);
+          return [...prev, w];
+        });
+      };
+
+      // Naming
+      useEffect(() => {
+        if (phase !== "running" || test.key !== "naming") return;
+        if (namingIdx >= namingTrials.length) { gotoInstruction(4); return; }
+        namingStart.current = Date.now();
+      }, [phase, test, namingIdx, namingTrials.length]);
+
+      const tapNaming = (answer) => {
+        if (phase !== "running" || test.key !== "naming") return;
+        const trial = namingTrials[namingIdx];
+        const ok = answer === trial.key;
+        push({
+          test_phase: instructionMs,
+          test_type: "Naming",
+          accuracy: ok ? 1 : 0,
+          is_correct: ok,
+          reaction_time_ms: Date.now() - namingStart.current,
+          error_detail: ok ? "" : `Selected_${answer}`,
+          stimulus: trial.key
+        });
+        flash(ok);
+        setNamingIdx((v) => v + 1);
+      };
+
+      // Form
+      useEffect(() => {
+        if (phase !== "running" || test.key !== "form") return;
+        if (formIdx >= formTrials.length) { setPhase("export"); return; }
+        formStart.current = Date.now();
+      }, [phase, test, formIdx, formTrials.length]);
+
+      const tapForm = (idx) => {
+        if (phase !== "running" || test.key !== "form") return;
+        const t = formTrials[formIdx];
+        const pickedOpt = t.options[idx];
+        const ok = pickedOpt.isCorrect;
+        const rt = Date.now() - formStart.current;
+        push({
+          test_phase: instructionMs,
+          test_type: "Form_Discrimination",
+          accuracy: ok ? 1 : 0,
+          is_correct: ok,
+          reaction_time_ms: rt,
+          match_rt: rt,
+          is_mismatch: !ok,
+          error_detail: ok ? "" : `Distractor_${pickedOpt.tag}`,
+          stimulus: "ShapePair"
+        });
+        flash(ok);
+        setFormIdx((v) => v + 1);
+      };
+
+      const toCsv = () => {
+        const headers = ["test_phase", "test_type", "accuracy", "reaction_time_ms", "error_detail", "match_rt", "is_mismatch", "stimulus"];
+        const lines = [headers.map(escapeCsv).join(",")];
+        rows.forEach((r) => lines.push(headers.map((h) => escapeCsv(r[h] ?? "")).join(",")));
+        lines.push(headers.map((_, i) => escapeCsv(i === 0 ? "SUMMARY" : "")).join(","));
+        lines.push(headers.map((_, i) => escapeCsv(i === 1 ? "Overall Accuracy (%)" : i === 2 ? stats.acc : "")).join(","));
+        lines.push(headers.map((_, i) => escapeCsv(i === 1 ? "Average RT (ms)" : i === 3 ? stats.avg : "")).join(","));
+        lines.push(headers.map((_, i) => escapeCsv(i === 1 ? "Total Score (30)" : i === 2 ? stats.score30 : "")).join(","));
+        return lines.join("\n");
+      };
+
+      const namingTrial = namingTrials[namingIdx];
+
+      return (
+        <div className="w-full h-full flex items-center justify-center p-6">
+          <div className={`panel ${fx}`}>
+            <div className="w-full h-[6px] bg-[#d9e2ff] rounded-full overflow-hidden mb-8">
+              <div className="h-full bg-[#0000ff] transition-all duration-500" style={{ width: `${progress}%` }} />
+            </div>
+
+            {phase === "intro" && (
+              <div className="fade text-center min-h-[520px] flex flex-col items-center justify-center">
+                <h1 className="text-[40px] font-bold mb-4">MoCA test</h1>
+                <p className="text-[24px] mb-10">Instruction - Ready - Countdown - Test - Feedback</p>
+                <button onClick={() => gotoInstruction(0)} className="text-[32px] font-bold px-10 py-5 rounded-2xl active:scale-95 transition-transform" style={{ background: APP_BTN, color: "#fff" }}>
+                  Begin Session
+                </button>
+              </div>
+            )}
+
+            {phase === "instruction" && (
+              <div className="fade text-center min-h-[520px] flex flex-col items-center justify-center">
+                <h2 className="text-[40px] font-bold mb-4">{test.title}</h2>
+                <p className="text-[24px] mb-12 max-w-[680px]">{test.subtitle}</p>
+                <button onClick={onReady} className="text-[32px] font-bold px-12 py-5 rounded-2xl active:scale-95 transition-transform" style={{ background: APP_BTN, color: "#fff" }}>
+                  I am Ready
+                </button>
+              </div>
+            )}
+
+            {phase === "countdown" && (
+              <div className="fade text-center min-h-[520px] flex flex-col items-center justify-center">
+                <p className="text-[24px] mb-8">Get Ready</p>
+                <p className="text-[96px] font-bold">{countdown}</p>
+              </div>
+            )}
+
+            {phase === "running" && test.key === "reaction" && (
+              <div className="fade min-h-[520px] flex flex-col items-center justify-center text-center">
+                <p className="text-[24px] mb-6">Round {rTrial + 1} / 3</p>
+                <p className="text-[18px] mb-4">Press and hold. Release when green + beep.</p>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onMouseDown={holdStartReaction}
+                  onMouseUp={holdEndReaction}
+                  onMouseLeave={() => rHolding && holdEndReaction()}
+                  onTouchStart={holdStartReaction}
+                  onTouchEnd={holdEndReaction}
+                  className={`relative rounded-full border-4 border-black flex items-center justify-center select-none ${rState === "waiting_green" ? "breathe" : ""}`}
+                  style={{ width: 280, height: 280, background: rState === "green" ? "#00AA00" : "#A3A3A3", cursor: "pointer" }}
+                >
+                  <div className="absolute inset-2 rounded-full border-2 border-dashed border-black opacity-30 spin-slow" />
+                  <div className="absolute inset-6 rounded-full border border-black opacity-20" />
+                  <div className="text-[14px] font-bold">{rState === "await_hold" ? "HOLD TO START" : rState === "green" ? "RELEASE NOW" : "WAIT..."}</div>
+                </div>
+              </div>
+            )}
+
+            {phase === "running" && test.key === "gonogo" && (
+              <div className="fade min-h-[520px] flex flex-col items-center justify-center text-center">
+                <p className="text-[24px] mb-6">Round {goIdx + 1} / 10</p>
+                <div key={goSceneKey} className="scene-fade grid grid-cols-3 grid-rows-3 gap-2 w-[330px] h-[330px]">
+                  {Array.from({ length: 9 }).map((_, i) => (
+                    <div key={i} className="flex items-center justify-center">
+                      {i === goPos ? (
+                        <button
+                          onClick={tapGo}
+                          className="active:scale-95 transition-transform"
+                          style={{
+                            width: 92,
+                            height: 92,
+                            borderRadius: goStim === "Red" ? "999px" : "10px",
+                            background: goStim === "Red" ? "#FF0000" : "#0000FF",
+                            border: "3px solid #111"
+                          }}
+                        />
+                      ) : (
+                        <div style={{ width: 92, height: 92 }} />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {phase === "running" && test.key === "memory" && (
+              <div className="fade min-h-[520px] flex flex-col items-center justify-center text-center">
+                {showWords ? (
+                  <>
+                    <p className="text-[24px] mb-6">Remember these words</p>
+                    <p className="text-[42px] font-bold">{targets.join("   ")}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[24px] mb-8">Select the 3 words you saw</p>
+                    <div className="grid grid-cols-3 gap-3 w-full">
+                      {choices.map((w) => {
+                        const on = picked.includes(w);
+                        return (
+                          <button key={w} onClick={() => tapMemory(w)} className="text-[28px] font-bold py-5 rounded-xl border-2 border-black active:scale-95 transition-transform" style={{ background: on ? "#0033FF" : APP_BTN, color: "#fff" }}>
+                            {w}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {phase === "running" && test.key === "naming" && namingTrial && (
+              <div className="fade min-h-[520px] flex flex-col items-center justify-center">
+                <p className="text-[24px] mb-6">Round {namingIdx + 1} / {namingTrials.length}</p>
+                <div className="w-[360px] h-[260px] bg-white border-2 border-black rounded-2xl flex items-center justify-center mb-8">
+                  <IconOrFallback Comp={namingTrial.comp} label={namingTrial.key} />
+                </div>
+                <div className="grid grid-cols-3 gap-3 w-full">
+                  {namingTrial.options.map((opt) => (
+                    <button key={opt} onClick={() => tapNaming(opt)} className="text-[24px] font-bold py-4 rounded-xl border-2 border-black active:scale-95 transition-transform" style={{ background: APP_BTN, color: "#fff" }}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {phase === "running" && test.key === "form" && (
+              <div className="fade min-h-[520px]">
+                <p className="text-[24px] text-center mb-6">Round {formIdx + 1} / {formTrials.length}</p>
+                {formTrials[formIdx] && (
+                  <div className="flex items-center gap-8">
+                    <div className="w-1/2 border-2 border-gray-200 rounded-2xl p-6 flex flex-col items-center">
+                      <p className="text-[20px] mb-4">Reference</p>
+                      <ShapePath path={formTrials[formIdx].referencePath} size={170} />
+                    </div>
+                    <div className="w-1/2 flex flex-col gap-4">
+                      {formTrials[formIdx].options.map((opt, i) => (
+                        <button key={i} onClick={() => tapForm(i)} className="border-2 border-black rounded-2xl p-4 active:scale-95 transition-transform flex justify-center">
+                          <ShapePath path={opt.path} size={100} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {phase === "export" && (
+              <div className="fade min-h-[520px] max-h-[74vh] overflow-y-auto text-center">
+                <h2 className="text-[38px] font-bold mb-4">Session Complete</h2>
+                <p className="text-[22px] mb-2">Accuracy: {stats.acc}% | Average RT: {stats.avg || "-"} ms</p>
+                <p className="text-[30px] font-bold mb-8">Total Score: {stats.score30} / 30</p>
+
+                <button onClick={() => downloadCsv(toCsv(), "moca_results.csv")} className="text-[32px] font-bold px-10 py-5 rounded-2xl mr-4 mb-4 active:scale-95 transition-transform" style={{ background: APP_BTN, color: "#fff" }}>
+                  Download CSV Report
+                </button>
+                <button onClick={() => window.location.reload()} className="text-[28px] font-bold px-8 py-4 rounded-2xl border-2 border-black mb-6 active:scale-95 transition-transform" style={{ background: "#fff", color: "#000" }}>
+                  Restart
+                </button>
+
+                <div className="text-left border border-gray-200 rounded-2xl p-4">
+                  <p className="text-[24px] font-bold mb-3">Data Preview (All Rows)</p>
+                  <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
+                    <table className="w-full border-collapse">
+                      <thead>
+                        <tr>
+                          {["test_phase", "test_type", "accuracy", "reaction_time_ms", "error_detail", "match_rt", "is_mismatch", "stimulus"].map((h) => (
+                            <th key={h} className="text-[14px] p-2 border-b bg-gray-50">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, i) => (
+                          <tr key={i}>
+                            <td className="text-[13px] p-2 border-b">{r.test_phase}</td>
+                            <td className="text-[13px] p-2 border-b">{r.test_type}</td>
+                            <td className="text-[13px] p-2 border-b">{r.accuracy}</td>
+                            <td className="text-[13px] p-2 border-b">{r.reaction_time_ms}</td>
+                            <td className="text-[13px] p-2 border-b">{r.error_detail}</td>
+                            <td className="text-[13px] p-2 border-b">{String(r.match_rt ?? "")}</td>
+                            <td className="text-[13px] p-2 border-b">{String(r.is_mismatch ?? "")}</td>
+                            <td className="text-[13px] p-2 border-b">{r.stimulus}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
